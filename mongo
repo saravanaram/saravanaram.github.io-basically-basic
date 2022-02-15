@@ -255,3 +255,122 @@
     {
         public ObjectId Id { get; set; }
     }
+ private MongoClient _mongoClient;
+        private IMongoCollection<T> _collection;
+        private readonly AppSettings _appSettings;
+
+        public CustomMongoRepository(MongoDBSettings mongoDBSettings)
+        {
+            _mongoClient = SetConnectionString(mongoDBSettings.MongoDBConnectionString, 30);
+            IMongoDatabase database = _mongoClient.GetDatabase(mongoDBSettings.MongoDataBaseName);
+            _collection = database.GetCollection<T>(mongoDBSettings.MongoDatabaseCollectionName);
+        }
+
+
+        private MongoClient SetConnectionString(string MongoDBConnectionString, int MongoDownTime)
+        {
+            int count = 0;
+            Console.WriteLine($"SetConnectionString started at :{DateTime.UtcNow}");
+            try
+            {
+                if (this._mongoClient == null)
+                {
+                    count++;
+                    var clientSettings = MongoClientSettings.FromConnectionString((MongoDBConnectionString));
+                    clientSettings.MaxConnectionIdleTime = new TimeSpan(0, 0, 59);
+                    clientSettings.ServerSelectionTimeout = TimeSpan.FromSeconds(MongoDownTime);
+                    clientSettings.MaxConnectionPoolSize = 500;
+                    clientSettings.AllowInsecureTls = true;
+                    this._mongoClient = new MongoClient(clientSettings);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{DateTime.UtcNow.ToString("yyyy-MM-dd hh:mm:ss tt", CultureInfo.InvariantCulture)} - Message not inserted in MongoDb, due to exception.{ex.Message}");
+            }
+            Console.WriteLine($"SetConnectionString completed at :{DateTime.UtcNow}");
+            return this._mongoClient;
+        }
+
+        public async Task<bool> InsertManyAsync(IEnumerable<T> item)
+        {
+            bool result = false;
+            try
+            {
+                await _collection.InsertManyAsync(item, new InsertManyOptions() { IsOrdered = false }).ConfigureAwait(false);
+                result = true;
+            }
+            catch (MongoException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+            return result;
+        }
+
+        public async Task<string> UpdateManyAsync(List<WriteModel<T>> listWrites)
+        {
+            BulkWriteOptions bulkWriteOptions = new BulkWriteOptions() { BypassDocumentValidation = true, IsOrdered = false };
+            string count = "";
+
+            try
+            {
+                BulkWriteResult result = await _collection.BulkWriteAsync(listWrites, bulkWriteOptions);
+                count = result.ModifiedCount.ToString();
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+            return count;
+        }
+
+        public async Task<ICollection<T>> FindAllByExpressionAsync(Expression<Func<T, bool>> predicate)
+        {
+            int reTry = 0;
+            while (true)
+            {
+                try
+                {
+                    return await _collection.Find(predicate).ToListAsync();
+                }
+                catch (Exception)
+                {
+                    reTry++;
+                    await Task.Delay(TimeSpan.FromMilliseconds(3000));
+                    if (reTry == 3)
+                    {
+                        throw;
+                    }
+
+                }
+            }
+
+        }
+        public async Task<bool> CheckIfDocumentExistAsync(FilterDefinition<T> filter)
+        {
+            int reTry = 0;
+            while (true)
+            {
+                try
+                {
+                    var data =  await _collection.Find(filter).Limit(1)?.FirstOrDefaultAsync();
+                    if (data != null) return true;
+                    return false;
+                }
+                catch (Exception)
+                {
+                    reTry++;
+                    await Task.Delay(TimeSpan.FromMilliseconds(3000));
+                    if (reTry == 3)
+                    {
+                        throw;
+                    }
+
+                }
+            }
+
+        }
